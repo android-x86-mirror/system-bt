@@ -249,6 +249,8 @@ BOOLEAN gatt_disconnect (tGATT_TCB *p_tcb)
                 {
                     gatt_set_ch_state(p_tcb, GATT_CH_CLOSING);
                     ret = L2CA_CancelBleConnectReq (p_tcb->peer_bda);
+                    if (!ret)
+                        gatt_set_ch_state(p_tcb, GATT_CH_CLOSE);
                 }
             }
             else
@@ -403,7 +405,6 @@ BOOLEAN gatt_act_connect (tGATT_REG *p_reg, BD_ADDR bd_addr, tBT_TRANSPORT trans
                 GATT_TRACE_ERROR("gatt_connect failed");
                 fixed_queue_free(p_tcb->pending_enc_clcb, NULL);
                 fixed_queue_free(p_tcb->pending_ind_q, NULL);
-                fixed_queue_free(p_tcb->sr_cmd.multi_rsp_q, NULL);
                 memset(p_tcb, 0, sizeof(tGATT_TCB));
             }
             else
@@ -418,7 +419,7 @@ BOOLEAN gatt_act_connect (tGATT_REG *p_reg, BD_ADDR bd_addr, tBT_TRANSPORT trans
 
     if (ret)
     {
-        gatt_update_app_use_link_flag(p_reg->gatt_if, p_tcb, TRUE, FALSE);
+        gatt_update_app_use_link_flag(p_reg->gatt_if, p_tcb, TRUE, TRUE);
     }
 
     return ret;

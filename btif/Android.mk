@@ -63,7 +63,15 @@ btifCommonSrc += \
   src/btif_storage.c \
   src/btif_uid.c \
   src/btif_util.c \
-  src/stack_manager.c
+  src/stack_manager.c \
+  src/btif_stack_log.c \
+  src/btif_rfcomm.c \
+  src/btif_mcap.c \
+  src/btif_l2cap.c \
+  src/btif_vendor.c \
+  src/btif_gatt_qual.c \
+  src/btif_gap.c \
+  src/btif_smp.c
 
 # Callouts
 btifCommonSrc += \
@@ -106,8 +114,17 @@ btifCommonIncludes := \
   $(LOCAL_PATH)/../audio_a2dp_hw \
   $(LOCAL_PATH)/../utils/include \
   $(bluetooth_C_INCLUDES) \
+  $(TARGET_OUT_HEADERS)/bt/hci_qcomm_init/aptX \
   external/tinyxml2 \
   external/zlib
+
+ifneq ($(TARGET_SUPPORTS_WEARABLES),true)
+btifCommonIncludes += \
+   vendor/qcom/opensource/bluetooth/hal/include
+else
+btifCommonIncludes += \
+   device/qcom/msm8909w/opensource/bluetooth/hal/include
+endif
 
 # libbtif static library for target
 # ========================================================
@@ -123,6 +140,7 @@ LOCAL_MODULE := libbtif
 LOCAL_CFLAGS += $(bluetooth_CFLAGS) -DBUILDCFG
 LOCAL_CONLYFLAGS += $(bluetooth_CONLYFLAGS)
 LOCAL_CPPFLAGS += $(bluetooth_CPPFLAGS)
+
 
 include $(BUILD_STATIC_LIBRARY)
 

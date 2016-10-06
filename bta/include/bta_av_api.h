@@ -1,4 +1,10 @@
 /******************************************************************************
+ *  Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ *
+ *  Not a contribution.
+ ******************************************************************************/
+
+/******************************************************************************
  *
  *  Copyright (C) 2004-2012 Broadcom Corporation
  *
@@ -60,6 +66,7 @@ typedef UINT8 tBTA_AV_STATUS;
 #define BTA_AV_FEAT_METADATA    0x0040  /* remote control Metadata Transfer command/response */
 #define BTA_AV_FEAT_MULTI_AV    0x0080  /* use multi-av, if controller supports it */
 #define BTA_AV_FEAT_BROWSE      0x0010  /* use browsing channel */
+#define BTA_AV_FEAT_CA          0x0020  /* use cover art */
 #define BTA_AV_FEAT_MASTER      0x0100  /* stream only as master role */
 #define BTA_AV_FEAT_ADV_CTRL    0x0200  /* remote control Advanced Control command/response */
 #define BTA_AV_FEAT_DELAY_RPT   0x0400  /* allow delay reporting */
@@ -67,6 +74,7 @@ typedef UINT8 tBTA_AV_STATUS;
 #define BTA_AV_FEAT_APP_SETTING 0x2000  /* Player app setting support */
 
 /* Internal features */
+#define BTA_AV_FEAT_AVRC_UI_UPDATE 0x4000 /* Update UI to show notification for browsing capable remote*/
 #define BTA_AV_FEAT_NO_SCO_SSPD 0x8000  /* Do not suspend av streaming as to AG events(SCO or Call) */
 
 typedef UINT16 tBTA_AV_FEAT;
@@ -89,7 +97,11 @@ typedef UINT8 tBTA_AV_HNDL;
 /* offset of codec type in codec info byte array */
 #define BTA_AV_CODEC_TYPE_IDX       AVDT_CODEC_TYPE_INDEX   /* 2 */
 
+/* offset of vendorId type in vendorId info byte array */
+#define BTA_AV_VENDOR_ID_TYPE_IDX    AVDT_VENDOR_ID_TYPE_INDEX   /* 3 */
 
+/* offset of codecId type in codecId info byte array */
+#define BTA_AV_CODEC_ID_TYPE_IDX     AVDT_CODEC_ID_TYPE_INDEX   /* 7 */
 
 /* maximum number of streams created: 1 for audio, 1 for video */
 #ifndef BTA_AV_NUM_STRS
@@ -254,9 +266,10 @@ typedef UINT8 tBTA_AV_ERR;
 #define BTA_AV_MEDIA_SINK_CFG_EVT    20 /* command to configure codec */
 #define BTA_AV_MEDIA_DATA_EVT   21      /* sending data to Media Task */
 #define BTA_AV_OFFLOAD_START_RSP_EVT 22 /* a2dp offload start response */
+#define BTA_AV_BROWSE_MSG_EVT   23      /* Browse MSG EVT */
+#define BTA_AV_ROLE_CHANGED_EVT     24
 /* Max BTA event */
-#define BTA_AV_MAX_EVT          23
-
+#define BTA_AV_MAX_EVT          25
 
 typedef UINT8 tBTA_AV_EVT;
 
@@ -289,6 +302,10 @@ typedef struct
     BOOLEAN         starting;
     tBTA_AV_EDR     edr;        /* 0, if peer device does not support EDR */
     UINT8           sep;        /*  sep type of peer device */
+    UINT8           role;       /* 0x00 master, 0x01 slave , 0xFF unkown*/
+#ifdef BTA_AV_SPLIT_A2DP_ENABLED
+    UINT16          stream_chnl_id;
+#endif
 } tBTA_AV_OPEN;
 
 /* data associated with BTA_AV_CLOSE_EVT */
@@ -306,6 +323,7 @@ typedef struct
     tBTA_AV_STATUS  status;
     BOOLEAN         initiator; /* TRUE, if local device initiates the START */
     BOOLEAN         suspending;
+    UINT8           role;       /* 0x00 master, 0x01 slave , 0xFF unkown*/
 } tBTA_AV_START;
 
 /* data associated with BTA_AV_SUSPEND_EVT */
@@ -415,10 +433,19 @@ typedef struct
     tAVRC_MSG       *p_msg;
 } tBTA_AV_META_MSG;
 
+/*data associated with BTA_AV_BROWSE_MSG_EVT */
+typedef struct
+{
+    UINT8           rc_handle;
+    UINT8           label;
+    tAVRC_MSG       *p_msg;
+}tBTA_AV_BROWSE_MSG;
+
 /* data associated with BTA_AV_PENDING_EVT */
 typedef struct
 {
     BD_ADDR         bd_addr;
+    tBTA_AV_HNDL    hndl;    /* Handle associated with the stream. */
 } tBTA_AV_PEND;
 
 /* data associated with BTA_AV_REJECT_EVT */
@@ -428,6 +455,13 @@ typedef struct
     tBTA_AV_HNDL    hndl;       /* Handle associated with the stream that rejected the connection. */
 } tBTA_AV_REJECT;
 
+/* data associated with BTA_AV_ROLE_CHANGED */
+typedef struct
+{
+    BD_ADDR  bd_addr;
+    UINT8    new_role;
+    tBTA_AV_HNDL    hndl;       /* Handle associated with role change event */
+} tBTA_AV_ROLE_CHANGED;
 
 /* union of data associated with AV callback */
 typedef union
@@ -450,9 +484,11 @@ typedef union
     tBTA_AV_SUSPEND     suspend;
     tBTA_AV_PEND        pend;
     tBTA_AV_META_MSG    meta_msg;
+    tBTA_AV_BROWSE_MSG  browse_msg;
     tBTA_AV_REJECT      reject;
     tBTA_AV_RC_FEAT     rc_feat;
     tBTA_AV_STATUS      status;
+    tBTA_AV_ROLE_CHANGED role_changed;
 } tBTA_AV;
 
 typedef struct
@@ -635,25 +671,47 @@ void BTA_AvEnable_Sink(int enable);
 **
 ** Function         BTA_AvStart
 **
-** Description      Start audio/video stream data transfer.
+** Description      Start audio/video stream data transfer on the AV handle.
 **
 ** Returns          void
 **
 *******************************************************************************/
-void BTA_AvStart(void);
+void BTA_AvStart(tBTA_AV_HNDL hndl);
 
 /*******************************************************************************
 **
 ** Function         BTA_AvStop
 **
-** Description      Stop audio/video stream data transfer.
+** Description      Stop audio/video stream data transfer on the AV handle.
 **                  If suspend is TRUE, this function sends AVDT suspend signal
 **                  to the connected peer(s).
 **
 ** Returns          void
 **
 *******************************************************************************/
-void BTA_AvStop(BOOLEAN suspend);
+void BTA_AvStop(BOOLEAN suspend, tBTA_AV_HNDL handle);
+
+/*******************************************************************************
+**
+** Function         BTA_AvEnableMultiCast
+**
+** Description      Enable/disable Avdtp MultiCast
+**
+** Returns          void
+**
+*******************************************************************************/
+void BTA_AvEnableMultiCast(BOOLEAN state, tBTA_AV_HNDL handle);
+
+/*******************************************************************************
+**
+** Function         BTA_AvUpdateMaxAVClient
+**
+** Description      Update max simultaneous AV connections supported
+**
+** Returns          void
+**
+*******************************************************************************/
+void BTA_AvUpdateMaxAVClient(UINT8 max_clients);
 
 /*******************************************************************************
 **

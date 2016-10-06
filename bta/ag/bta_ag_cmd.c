@@ -24,6 +24,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "bt_target.h"
 #include "bt_types.h"
@@ -35,6 +36,7 @@
 #include "bt_common.h"
 #include "port_api.h"
 #include "utl.h"
+#include <cutils/properties.h>
 
 
 /*****************************************************************************
@@ -111,7 +113,9 @@ enum
     BTA_AG_HF_CMD_CBC,
     BTA_AG_HF_CMD_BCC,
     BTA_AG_HF_CMD_BCS,
-    BTA_AG_HF_CMD_BAC
+    BTA_AG_HF_CMD_BAC,
+    BTA_AG_HF_CMD_BIND,
+    BTA_AG_HF_CMD_BIEV
 };
 
 /* AT command interpreter table for HSP */
@@ -153,6 +157,8 @@ const tBTA_AG_AT_CMD bta_ag_hfp_cmd[] =
     {"+BCC",    BTA_AG_AT_NONE,                     BTA_AG_AT_STR,   0,   0},
     {"+BCS",    BTA_AG_AT_SET,                      BTA_AG_AT_INT,   0,   BTA_AG_CMD_MAX_VAL},
     {"+BAC",    BTA_AG_AT_SET,                      BTA_AG_AT_STR,   0,   0},
+    {"+BIND",   (BTA_AG_AT_SET | BTA_AG_AT_READ | BTA_AG_AT_TEST),  BTA_AG_AT_STR,   0,   0},
+    {"+BIEV",   BTA_AG_AT_SET,                      BTA_AG_AT_STR,   0,   0},
     {"",        BTA_AG_AT_NONE,                     BTA_AG_AT_STR,   0,   0}
 };
 
@@ -194,7 +200,8 @@ enum
     BTA_AG_RES_COPS,
     BTA_AG_RES_CMEE,
     BTA_AG_RES_BCS,
-    BTA_AG_RES_UNAT
+    BTA_AG_RES_UNAT,
+    BTA_AG_RES_BIND
 };
 
 #if defined(BTA_HSP_RESULT_REPLACE_COLON) && (BTA_HSP_RESULT_REPLACE_COLON == TRUE)
@@ -223,7 +230,8 @@ const tBTA_AG_RESULT bta_ag_result_tbl[] =
     {"+COPS: ", BTA_AG_RES_FMT_STR},
     {"+CME ERROR: ", BTA_AG_RES_FMT_INT},
     {"+BCS: ",  BTA_AG_RES_FMT_INT},
-    {"",        BTA_AG_RES_FMT_STR}
+    {"",        BTA_AG_RES_FMT_STR},
+    {"+BIND: ", BTA_AG_RES_FMT_STR},
 };
 
 const tBTA_AG_AT_CMD *bta_ag_at_tbl[BTA_AG_NUM_IDX] =
@@ -268,7 +276,9 @@ const tBTA_AG_EVT bta_ag_hfp_cb_evt[] =
     BTA_AG_AT_CBC_EVT,      /* BTA_AG_HF_CMD_CBC */
     0,                      /* BTA_AG_HF_CMD_BCC */
     BTA_AG_AT_BCS_EVT,      /* BTA_AG_HF_CMD_BCS */
-    BTA_AG_AT_BAC_EVT       /* BTA_AG_HF_CMD_BAC */
+    BTA_AG_AT_BAC_EVT,      /* BTA_AG_HF_CMD_BAC */
+    BTA_AG_AT_BIND_EVT,     /* BTA_AG_HF_CMD_BIND */
+    BTA_AG_AT_BIEV_EVT      /* BTA_AG_HF_CMD_BIEV */
 };
 
 /* translation of API result code values to internal values */
@@ -294,7 +304,9 @@ const UINT8 bta_ag_trans_result[] =
     0,                  /* BTA_AG_CALL_CANCEL_RES */
     0,                  /* BTA_AG_END_CALL_RES */
     0,                  /* BTA_AG_IN_CALL_HELD_RES */
-    BTA_AG_RES_UNAT     /* BTA_AG_UNAT_RES */
+    BTA_AG_RES_UNAT,    /* BTA_AG_UNAT_RES */
+    0,                  /* BTA_AG_MULTI_CALL_RES */
+    BTA_AG_RES_BIND     /* BTA_AG_BIND_RES */
 };
 
 /* callsetup indicator value lookup table */
@@ -319,7 +331,10 @@ const UINT8 bta_ag_callsetup_ind_tbl[] =
     BTA_AG_CALLSETUP_NONE,      /* BTA_AG_OUT_CALL_CONN_RES */
     BTA_AG_CALLSETUP_NONE,      /* BTA_AG_CALL_CANCEL_RES */
     BTA_AG_CALLSETUP_NONE,      /* BTA_AG_END_CALL_RES */
-    BTA_AG_CALLSETUP_NONE       /* BTA_AG_IN_CALL_HELD_RES */
+    BTA_AG_CALLSETUP_NONE,      /* BTA_AG_IN_CALL_HELD_RES */
+    0,                          /* BTA_AG_UNAT_RES */
+    0,                          /* BTA_AG_MULTI_CALL_RES */
+    0,                          /* BTA_AG_BIND_RES */
 };
 
 /*******************************************************************************
@@ -385,7 +400,7 @@ static void bta_ag_send_result(tBTA_AG_SCB *p_scb, UINT8 code, char *p_arg,
     *p++ = '\n';
 
 #if defined(BTA_AG_RESULT_DEBUG) && (BTA_AG_RESULT_DEBUG == TRUE)
-    APPL_TRACE_DEBUG("bta_ag_send_result: %s", buf);
+    APPL_TRACE_IMP("bta_ag_send_result: %s", buf);
 #endif
 
     /* send to RFCOMM */
@@ -662,6 +677,68 @@ static UINT8 bta_ag_parse_chld(tBTA_AG_SCB *p_scb, char *p_s)
     return (retval);
 }
 
+/*******************************************************************************
+**
+** Function         bta_ag_parse_biev
+**
+** Description      Parse AT+BIEV parameter string.
+**
+**
+** Returns          TRUE if parsed ok, FALSE otherwise.
+**
+*******************************************************************************/
+static BOOLEAN bta_ag_parse_biev(tBTA_AG_SCB *p_scb, char *p_s)
+ {
+     INT32 token1;
+     long long int token2;
+     BOOLEAN cont = FALSE;       /* Continue processing */
+     char *p, *end;
+     int i = 0;
+
+     while(p_s)
+     {
+         /* skip to comma delimiter */
+         for(p = p_s; *p != ',' && *p != 0; p++);
+
+         /* get integer value */
+         if (*p != 0)
+         {
+             *p = 0;
+             cont = TRUE;
+         }
+         else
+             cont = FALSE;
+
+         if (i > 1)
+             return FALSE;
+
+         if (i == 0)
+         {
+             token1 = utl_str2int32(p_s);
+             if (token1 == -1)
+                 return FALSE;
+         }
+         else
+         {
+            token2 = strtoll(p_s, &end, 10);
+            if (*end != 0 || token2 < 0 || token2 > 0xFFFFFFFF)
+               return FALSE;
+         }
+
+         if (cont)
+         {
+             p_s = p + 1;
+             i++;
+         }
+         else
+         {
+             if (i == 0) return FALSE;
+             break;
+         }
+     }
+     return TRUE;
+ }
+
 #if (BTM_WBS_INCLUDED == TRUE )
 /*******************************************************************************
 **
@@ -712,6 +789,61 @@ static tBTA_AG_PEER_CODEC bta_ag_parse_bac(tBTA_AG_SCB *p_scb, char *p_s)
     return (retval);
 }
 #endif
+
+/*******************************************************************************
+**
+** Function         bta_ag_parse_bind
+**
+** Description      Parse AT+BIND parameter string.
+**
+** Returns          TRUE if parsed ok, FALSE otherwise.
+**
+*******************************************************************************/
+static BOOLEAN bta_ag_parse_bind(tBTA_AG_SCB *p_scb, char *p_s)
+{
+    INT32  anum_hfind;
+    BOOLEAN cont = FALSE;       /* Continue processing */
+    char *p;
+    int i = 0;
+
+    while(p_s)
+    {
+        /* skip to comma delimiter */
+        for(p = p_s; *p != ',' && *p != 0; p++);
+
+        /* get integre value */
+        if (*p != 0)
+        {
+            *p = 0;
+            cont = TRUE;
+        }
+        else
+            cont = FALSE;
+
+        anum_hfind = utl_str2int32(p_s);
+        if ((anum_hfind == -1) || (i == 20))
+            return FALSE;
+
+        switch(anum_hfind)
+        {
+            case BTA_AG_HFIND_ENHANCED_SAFETY:
+                APPL_TRACE_DEBUG("BTA_AG_HFIND_ENHANCED_SAFETY supported");
+                break;
+            default:
+                APPL_TRACE_ERROR("unknown HFIND");
+                break;
+        }
+
+        if (cont)
+        {
+            p_s = p + 1;
+            i++;
+        }
+        else
+            break;
+    }
+    return TRUE;
+}
 
 /*******************************************************************************
 **
@@ -874,6 +1006,8 @@ void bta_ag_at_hfp_cback(tBTA_AG_SCB *p_scb, UINT16 cmd, UINT8 arg_type,
     tBTA_AG_SCB     *ag_scb;
     UINT32          i, ind_id;
     UINT32          bia_masked_out;
+    tBTA_AG_FEAT  features;
+    char value[PROPERTY_VALUE_MAX];
 #if (BTM_WBS_INCLUDED == TRUE )
     tBTA_AG_PEER_CODEC  codec_type, codec_sent;
 #endif
@@ -884,13 +1018,14 @@ void bta_ag_at_hfp_cback(tBTA_AG_SCB *p_scb, UINT16 cmd, UINT8 arg_type,
         return;
     }
 
-    APPL_TRACE_DEBUG("HFP AT cmd:%d arg_type:%d arg:%d arg:%s", cmd, arg_type,
+    APPL_TRACE_IMP("HFP AT cmd:%d arg_type:%d arg:%d arg:%s", cmd, arg_type,
                       int_arg, p_arg);
 
     val.hdr.handle = bta_ag_scb_to_idx(p_scb);
     val.hdr.app_id = p_scb->app_id;
     val.num = int_arg;
     bdcpy(val.bd_addr, p_scb->peer_addr);
+    memset(val.str, 0, sizeof(val.str));
     strlcpy(val.str, p_arg, BTA_AG_AT_MAX_LEN);
 
     event = bta_ag_hfp_cb_evt[cmd];
@@ -971,8 +1106,15 @@ void bta_ag_at_hfp_cback(tBTA_AG_SCB *p_scb, UINT16 cmd, UINT8 arg_type,
                 /* send OK */
                 bta_ag_send_ok(p_scb);
 
-                /* if service level conn. not already open, now it's open */
-                bta_ag_svc_conn_open(p_scb, NULL);
+                /* if service level conn. not already open and our features and
+                  ** peer features do not have Hf indicators, service level conn. now open
+                  */
+                if (!p_scb->svc_conn &&
+                    !((p_scb->features & BTA_AG_FEAT_HFIND) &&
+                    (p_scb->peer_features & BTA_AG_PEER_FEAT_HFIND)))
+                {
+                    bta_ag_svc_conn_open(p_scb, NULL);
+                }
 
             }
             else
@@ -1042,10 +1184,13 @@ void bta_ag_at_hfp_cback(tBTA_AG_SCB *p_scb, UINT16 cmd, UINT8 arg_type,
                 bta_ag_send_ok(p_scb);
 
                 /* if service level conn. not already open and our features and
-                ** peer features do not have 3-way, service level conn. now open
+                ** peer features do not have 3-way and Hf indicators, service level conn. now open
                 */
                 if (!p_scb->svc_conn &&
-                    !((p_scb->features & BTA_AG_FEAT_3WAY) && (p_scb->peer_features & BTA_AG_PEER_FEAT_3WAY)))
+                    !((p_scb->features & BTA_AG_FEAT_3WAY) &&
+                      (p_scb->peer_features & BTA_AG_PEER_FEAT_3WAY)) &&
+                    !((p_scb->features & BTA_AG_FEAT_HFIND) &&
+                      (p_scb->peer_features & BTA_AG_PEER_FEAT_HFIND)))
                 {
                     bta_ag_svc_conn_open(p_scb, NULL);
                 }
@@ -1090,10 +1235,32 @@ void bta_ag_at_hfp_cback(tBTA_AG_SCB *p_scb, UINT16 cmd, UINT8 arg_type,
         case BTA_AG_HF_CMD_BRSF:
             /* store peer features */
             p_scb->peer_features = (UINT16) int_arg;
-
+            features = p_scb->features & BTA_AG_BSRF_FEAT_SPEC;
+            /* if the devices does not support HFP 1.7, report DUT's HFP version as 1.6 */
+            if (p_scb->peer_version < HFP_VERSION_1_7)
+            {
+                /* For PTS keep flags as is. */
+                if (property_get("bt.pts.certification", value, "false") &&
+                    strcmp(value, "true") != 0)
+                {
+                    features = features & ~(BTA_AG_FEAT_HFIND | BTA_AG_FEAT_S4);
+                }
+             }
+             else if ((p_scb->peer_version == HFP_VERSION_1_7) &&
+                      (!(p_scb->peer_features & BTA_AG_PEER_FEAT_HFIND)))
+             {
+                APPL_TRACE_WARNING("%s: Remote is hfp 1.7 but does not support HF indicators" \
+                                     "unset hf indicator bit from BRSF", __func__);
+                /* For PTS keep flags as is. */
+                if (property_get("bt.pts.certification", value, "false") &&
+                    strcmp(value, "true") != 0)
+                {
+                    features = features & ~(BTA_AG_FEAT_HFIND);
+                }
+             }
             /* send BRSF, send OK */
             bta_ag_send_result(p_scb, BTA_AG_RES_BRSF, NULL,
-                               (INT16) (p_scb->features & BTA_AG_BSRF_FEAT_SPEC));
+                               (INT16) features);
             bta_ag_send_ok(p_scb);
             break;
 
@@ -1275,10 +1442,64 @@ void bta_ag_at_hfp_cback(tBTA_AG_SCB *p_scb, UINT16 cmd, UINT8 arg_type,
 
         case BTA_AG_HF_CMD_BCC:
             bta_ag_send_ok(p_scb);
+            p_scb->codec_updated = TRUE;
             bta_ag_sco_open(p_scb, NULL);
             break;
 #endif
-
+        case BTA_AG_HF_CMD_BIND:
+            if ((p_scb->features & BTA_AG_FEAT_HFIND) &&
+                (p_scb->peer_features & BTA_AG_PEER_FEAT_HFIND))
+            {
+                val.num = arg_type;
+                if (arg_type == BTA_AG_AT_SET)
+                {
+                    if (!bta_ag_parse_bind(p_scb, p_arg))
+                    {
+                        event = 0;
+                        bta_ag_send_error(p_scb, BTA_AG_ERR_INV_CHAR_IN_TSTR);
+                    }
+                    else
+                    {
+                        bta_ag_send_ok (p_scb);
+                    }
+                }
+                else if (arg_type == BTA_AG_AT_READ)
+                {
+                    /* open SLC when response ok is sent from app*/
+                    p_scb->slc_pend_open = true;
+                }
+                else if (arg_type == BTA_AG_AT_TEST)
+                {
+                    /* get ag's list of supported hf indicators from app */
+                }
+                else
+                {
+                    event = 0;
+                    bta_ag_send_error (p_scb, BTA_AG_ERR_INVALID_INDEX);
+                }
+            }
+            else
+            {
+                event = 0;
+                bta_ag_send_error(p_scb, BTA_AG_ERR_OP_NOT_SUPPORTED);
+            }
+            break;
+        case BTA_AG_HF_CMD_BIEV:
+            if ((p_scb->features & BTA_AG_FEAT_HFIND) &&
+                (p_scb->peer_features & BTA_AG_PEER_FEAT_HFIND))
+            {
+                if (!bta_ag_parse_biev(p_scb, p_arg))
+                {
+                    event = 0;
+                    bta_ag_send_error(p_scb, BTA_AG_ERR_INV_CHAR_IN_TSTR);
+                }
+            }
+            else
+            {
+                event = 0;
+                bta_ag_send_error(p_scb, BTA_AG_ERR_OP_NOT_SUPPORTED);
+            }
+            break;
         default:
             bta_ag_send_error(p_scb, BTA_AG_ERR_OP_NOT_SUPPORTED);
             break;
@@ -1453,7 +1674,7 @@ void bta_ag_hfp_result(tBTA_AG_SCB *p_scb, tBTA_AG_API_RESULT *p_result)
 {
     UINT8 code = bta_ag_trans_result[p_result->result];
 
-    APPL_TRACE_DEBUG("bta_ag_hfp_result : res = %d", p_result->result);
+    APPL_TRACE_IMP("bta_ag_hfp_result : res = %d", p_result->result);
 
     switch(p_result->result)
     {
@@ -1667,6 +1888,13 @@ void bta_ag_hfp_result(tBTA_AG_SCB *p_scb, tBTA_AG_API_RESULT *p_result)
 
                 if (p_result->data.ok_flag == BTA_AG_OK_DONE)
                     bta_ag_send_ok(p_scb);
+
+                if (p_scb->slc_pend_open)
+                {
+                    APPL_TRACE_DEBUG("opening SLC now after +BIND READ response");
+                    bta_ag_svc_conn_open(p_scb, NULL);
+                    p_scb->slc_pend_open = FALSE;
+                }
             }
             else
             {
@@ -1708,6 +1936,10 @@ void bta_ag_hfp_result(tBTA_AG_SCB *p_scb, tBTA_AG_API_RESULT *p_result)
                 bta_ag_send_error(p_scb, p_result->data.errcode);
             }
             break;
+
+       case BTA_AG_BIND_RES:
+           bta_ag_send_result(p_scb, code, p_result->data.str, 0);
+           break;
 
        default:
             break;
@@ -1789,6 +2021,13 @@ void bta_ag_send_bcs(tBTA_AG_SCB *p_scb, tBTA_AG_DATA *p_data)
 void bta_ag_send_ring(tBTA_AG_SCB *p_scb, tBTA_AG_DATA *p_data)
 {
     UNUSED(p_data);
+
+    if ((p_scb->conn_service == BTA_AG_HFP) &&
+         p_scb->callsetup_ind != BTA_AG_CALLSETUP_INCOMING)
+    {
+        APPL_TRACE_DEBUG("don't send the ring since there is no MT call setup");
+        return;
+    }
 
 #if defined(BTA_AG_MULTI_RESULT_INCLUDED) && (BTA_AG_MULTI_RESULT_INCLUDED == TRUE)
     tBTA_AG_MULTI_RESULT_CB m_res_cb;
