@@ -93,9 +93,11 @@ static future_t *start_up(void) {
 
   module_started = true;
   stack_config->get_btsnoop_ext_options(&hci_ext_dump_enabled, &btsnoop_conf_from_file);
+#if (BTSNOOP_DEFAULT == TRUE)
   if (btsnoop_conf_from_file == false) {
     hci_ext_dump_enabled = true;
   }
+#endif
   update_logging();
 
   return NULL;
@@ -104,7 +106,7 @@ static future_t *start_up(void) {
 static future_t *shut_down(void) {
   module_started = false;
   if (hci_ext_dump_enabled == true) {
-    STOP_SNOOP_LOGGING();
+    property_set("bluetooth.startbtsnoop", "false");
   }
   update_logging();
 
@@ -192,7 +194,7 @@ static void update_logging() {
     btsnoop_net_open();
 
     if (hci_ext_dump_enabled == true) {
-      START_SNOOP_LOGGING();
+      property_set("bluetooth.startbtsnoop", "true");
     }
     const char *log_path = stack_config->get_btsnoop_log_path();
 
@@ -205,12 +207,15 @@ static void update_logging() {
         LOG_ERROR(LOG_TAG, "%s unable to rename '%s' to '%s': %s", __func__, log_path, last_log_path, strerror(errno));
     }
 
+    mode_t prevmask = umask(0);
     logfile_fd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
     if (logfile_fd == INVALID_FD) {
       LOG_ERROR(LOG_TAG, "%s unable to open '%s': %s", __func__, log_path, strerror(errno));
       is_logging = false;
+      umask(prevmask);
       return;
     }
+    umask(prevmask);
 
     write(logfile_fd, "btsnoop\0\0\0\0\1\0\0\x3\xea", 16);
   } else {

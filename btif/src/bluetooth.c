@@ -31,7 +31,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <cutils/properties.h>
 #include <hardware/bluetooth.h>
 #include <hardware/bt_av.h>
 #include <hardware/bt_gatt.h>
@@ -65,10 +64,10 @@
 #include "btif_storage.h"
 #include "btif/include/btif_debug_btsnoop.h"
 #include "btif/include/btif_debug_conn.h"
+#include "btif/include/btif_debug_l2c.h"
 #include "btif/include/btif_media.h"
 #include "l2cdefs.h"
 #include "l2c_api.h"
-#include "stack_config.h"
 
 #if TEST_APP_INTERFACE == TRUE
 #include <bt_testapp.h>
@@ -145,20 +144,6 @@ static bool is_profile(const char *p1, const char *p2) {
   return strlen(p1) == strlen(p2) && strncmp(p1, p2, strlen(p2)) == 0;
 }
 
-void get_logger_config_value()
-{
-  bool hci_ext_dump_enabled = false;
-  bool btsnoop_conf_from_file = false;
-  stack_config_get_interface()->get_btsnoop_ext_options(&hci_ext_dump_enabled, &btsnoop_conf_from_file);
-
-  /* ToDo: Chnage dependency to work on one config option*/
-  if(!btsnoop_conf_from_file)
-    hci_ext_dump_enabled = true;
-
-  if(hci_ext_dump_enabled)
-        bt_logger_enabled = true;
-}
-
 /*****************************************************************************
 **
 **   BLUETOOTH HAL INTERFACE FUNCTIONS
@@ -177,10 +162,6 @@ static int init(bt_callbacks_t *callbacks) {
 
   bt_hal_cbacks = callbacks;
   stack_manager_get_interface()->init_stack();
-  get_logger_config_value();
-
-  if(bt_logger_enabled)
-    property_set("bluetooth.startbtlogger", "true");
   btif_debug_init();
   return BT_STATUS_SUCCESS;
 }
@@ -207,9 +188,6 @@ static int disable(void) {
 
 static void cleanup(void) {
   stack_manager_get_interface()->clean_up_stack();
-
-  if(bt_logger_enabled)
-    property_set("bluetooth.startbtlogger", "false");
 }
 
 bool is_restricted_mode() {
@@ -386,20 +364,15 @@ static int read_energy_info()
 static void dump(int fd, const char **arguments)
 {
     if (arguments != NULL && arguments[0] != NULL) {
-      if (strncmp(arguments[0], "--proto-text", 12) == 0) {
-        btif_update_a2dp_metrics();
-        metrics_print(fd, true);
-        return;
-      }
       if (strncmp(arguments[0], "--proto-bin", 11) == 0) {
-        btif_update_a2dp_metrics();
-        metrics_write(fd, true);
+        metrics_write_base64(fd, true);
         return;
       }
     }
     btif_debug_conn_dump(fd);
     btif_debug_bond_event_dump(fd);
     btif_debug_a2dp_dump(fd);
+    btif_debug_l2c_dump(fd);
     btif_debug_config_dump(fd);
     wakelock_debug_dump(fd);
     alarm_debug_dump(fd);
