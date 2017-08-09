@@ -476,7 +476,6 @@ static uint8_t get_ble_white_list_size(void) {
 
 static uint8_t get_ble_resolving_list_max_size(void) {
   assert(readable);
-  assert(ble_supported);
   return ble_resolving_list_max_size;
 }
 
