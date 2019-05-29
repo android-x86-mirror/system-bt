@@ -1,5 +1,5 @@
 //
-// Copyright (C) 2017 The Android Open Source Project
+// Copyright (C) 2016 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,11 +17,19 @@ cc_binary {
     name: "android.hardware.bluetooth@1.0-service.btlinux",
     proprietary: true,
     relative_install_path: "hw",
+    include_dirs: [
+        "system/bt/device/include",
+        "system/bt/stack/include"
+    ],
     srcs: [
-        "hci_packetizer.cc",
-        "h4_protocol.cc",
-        "bluetooth_hci.cc",
         "async_fd_watcher.cc",
+        "bluetooth_hci.cc",
+        "bluetooth_address.cc",
+        "vendor_interface.cc",
+        "hci_packetizer.cc",
+        "hci_protocol.cc",
+        "h4_protocol.cc",
+        "mct_protocol.cc",
         "service.cc"
     ],
     shared_libs: [
@@ -29,14 +37,15 @@ cc_binary {
         "libbase",
         "libcutils",
         "libhardware",
+        "libhwbinder",
         "libhidlbase",
         "libhidltransport",
         "liblog",
         "libutils",
+        "libusb",
     ],
-    conlyflags: [
-        "-std=c99",
+    required: [
+        "libbt-vendor",
     ],
     init_rc: ["android.hardware.bluetooth@1.0-service.btlinux.rc"],
 }
-
