@@ -265,7 +265,7 @@ static future_t* start_up(void) {
   }
 
   if (!HCI_READ_ENCR_KEY_SIZE_SUPPORTED(supported_commands)) {
-    LOG(FATAL) << " Controller must support Read Encryption Key Size command";
+    LOG(WARNING) << " Controller must support Read Encryption Key Size command";
   }
 
   readable = true;
