@@ -135,8 +135,6 @@ static void reassemble_and_dispatch(UNUSED_ATTR BT_HDR *packet) {
     STREAM_TO_UINT16(acl_length, stream);
     STREAM_TO_UINT16(l2cap_length, stream);
 
-    assert(acl_length == packet->len - HCI_ACL_PREAMBLE_SIZE);
-
     uint8_t boundary_flag = GET_BOUNDARY_FLAG(handle);
     handle = handle & HANDLE_MASK;
 
