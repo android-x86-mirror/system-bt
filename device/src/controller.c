@@ -28,6 +28,7 @@
 #include "btcore/include/version.h"
 #include "hcimsgs.h"
 #include "osi/include/future.h"
+#include "osi/include/log.h"
 #include "stack/include/btm_ble_api.h"
 
 const bt_event_mask_t BLE_EVENT_MASK = { "\x00\x00\x00\x00\x00\x00\x06\x7f" };
@@ -252,7 +253,9 @@ static future_t *start_up(void) {
         &number_of_local_supported_codecs, local_supported_codecs);
   }
 
-  assert(HCI_READ_ENCR_KEY_SIZE_SUPPORTED(supported_commands));
+  if (!HCI_READ_ENCR_KEY_SIZE_SUPPORTED(supported_commands)) {
+    LOG_WARN(LOG_TAG, "Controller doesn't support Read Encryption Key Size command");
+  }
 
   readable = true;
   return future_new_immediate(FUTURE_SUCCESS);
