@@ -1191,22 +1191,14 @@ static void btif_dm_ssp_cfm_req_evt(tBTA_DM_SP_CFM_REQ *p_ssp_cfm_req)
     /* If JustWorks auto-accept */
     if (p_ssp_cfm_req->just_works)
     {
-        /* Pairing consent for JustWorks needed if:
-         * 1. Incoming (non-temporary) pairing is detected AND
-         * 2. local IO capabilities are DisplayYesNo AND
-         * 3. remote IO capabiltiies are DisplayOnly or NoInputNoOutput;
+        /* Pairing consent for JustWorks NOT needed if:
+         * 1. Incoming temporary pairing is detected
          */
-        if (is_incoming && pairing_cb.bond_type != BOND_TYPE_TEMPORARY &&
-               ((p_ssp_cfm_req->loc_io_caps == HCI_IO_CAP_DISPLAY_YESNO) &&
-                (p_ssp_cfm_req->rmt_io_caps == HCI_IO_CAP_DISPLAY_ONLY ||
-                 p_ssp_cfm_req->rmt_io_caps == HCI_IO_CAP_NO_IO)))
+        if (is_incoming && pairing_cb.bond_type == BOND_TYPE_TEMPORARY)
         {
-            BTIF_TRACE_EVENT("%s: User consent needed for incoming pairing request. loc_io_caps: %d, rmt_io_caps: %d",
-                __FUNCTION__, p_ssp_cfm_req->loc_io_caps, p_ssp_cfm_req->rmt_io_caps);
-        }
-        else
-        {
-            BTIF_TRACE_EVENT("%s: Auto-accept JustWorks pairing", __FUNCTION__);
+            BTIF_TRACE_EVENT(
+                "%s: Auto-accept JustWorks pairing for temporary incoming",
+                __func__);
             btif_dm_ssp_reply(&bd_addr, BT_SSP_VARIANT_CONSENT, TRUE, 0);
             return;
         }
@@ -2164,9 +2156,13 @@ static void btif_dm_upstreams_evt(UINT16 event, char* p_param)
                     break;
             }
             break;
+        case BTA_DM_BLE_CONSENT_REQ_EVT:
+            BTIF_TRACE_DEBUG("BTA_DM_BLE_CONSENT_REQ_EVT. ");
+            btif_dm_ble_sec_req_evt(&p_data->ble_req, TRUE);
+        break;
         case BTA_DM_BLE_SEC_REQ_EVT:
             BTIF_TRACE_DEBUG("BTA_DM_BLE_SEC_REQ_EVT. ");
-            btif_dm_ble_sec_req_evt(&p_data->ble_req);
+            btif_dm_ble_sec_req_evt(&p_data->ble_req, FALSE);
             break;
         case BTA_DM_BLE_PASSKEY_NOTIF_EVT:
             BTIF_TRACE_DEBUG("BTA_DM_BLE_PASSKEY_NOTIF_EVT. ");
@@ -3423,7 +3419,7 @@ static void btif_dm_ble_auth_cmpl_evt (tBTA_DM_AUTH_CMPL *p_auth_cmpl)
             btif_storage_remove_bonded_device(&bdaddr);
             state = BT_BOND_STATE_NONE;
         } else {
-            btif_dm_save_ble_bonding_keys();
+            btif_dm_save_ble_bonding_keys(bdaddr);
             BTA_GATTC_Refresh(bd_addr.address);
             btif_dm_get_remote_services_by_transport(&bd_addr, BTA_GATT_TRANSPORT_LE);
         }
@@ -3494,14 +3490,10 @@ void    btif_dm_get_ble_local_keys(tBTA_DM_BLE_LOCAL_KEY_MASK *p_key_mask, BT_OC
     BTIF_TRACE_DEBUG("%s  *p_key_mask=0x%02x",__FUNCTION__,   *p_key_mask);
 }
 
-void btif_dm_save_ble_bonding_keys(void)
+void btif_dm_save_ble_bonding_keys(bt_bdaddr_t bd_addr)
 {
 
-    bt_bdaddr_t bd_addr;
-
     BTIF_TRACE_DEBUG("%s",__FUNCTION__ );
-
-    bdcpy(bd_addr.address, pairing_cb.bd_addr);
 
     if (pairing_cb.ble.is_penc_key_rcvd)
     {
@@ -3572,7 +3564,7 @@ void btif_dm_remove_ble_bonding_keys(void)
 ** Returns          void
 **
 *******************************************************************************/
-void btif_dm_ble_sec_req_evt(tBTA_DM_BLE_SEC_REQ *p_ble_req)
+void btif_dm_ble_sec_req_evt(tBTA_DM_BLE_SEC_REQ* p_ble_req, bool is_consent)
 {
     bt_bdaddr_t bd_addr;
     bt_bdname_t bd_name;
@@ -3581,7 +3573,7 @@ void btif_dm_ble_sec_req_evt(tBTA_DM_BLE_SEC_REQ *p_ble_req)
 
     BTIF_TRACE_DEBUG("%s", __FUNCTION__);
 
-    if (pairing_cb.state == BT_BOND_STATE_BONDING)
+    if (!is_consent && pairing_cb.state == BT_BOND_STATE_BONDING)
     {
         BTIF_TRACE_DEBUG("%s Discard security request", __FUNCTION__);
         return;
